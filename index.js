@@ -1,5 +1,6 @@
 var express = require('express');
 var mongoose = require('mongoose');
+var couchbase = require('couchbase');
 var redis = require("redis");
 
 var MongoStore = {
@@ -142,12 +143,90 @@ var RedisStore = {
     }
 }
 
+var CouchbaseStore = {
+    client: null,
+    options: {},
+    get: function (sid, cb) {
+        CouchbaseStore.client.get(sid, function (err, doc) {
+            try {
+                // err code 13 means our key does not exist
+                if (err && err.code !== 13) return cb(err, null);
+
+                if (!doc) return cb();
+                console.log(doc.value);
+                cb(null, doc.value); 
+            }
+            catch (err) {
+                cb(err);
+            }
+        });
+    },
+    set: function (sid, data, cb) {
+        console.log('in set');
+        try {
+            var lastAccess = new Date();
+            var expires = lastAccess.setDate(lastAccess.getDate() + 1);
+
+            console.log('data is ...');
+            console.log(data);
+
+            if (typeof data.cookie != 'undefined') {
+                expires = data.cookie._expires;
+            }
+
+            if (typeof data.lastAccess != 'undefined') {
+                lastAccess = new Date(data.lastAccess);
+            }
+
+            data.lastAccess = lastAccess,
+            data.expires = expires
+
+            CouchbaseStore.client.set(sid, data, cb);
+        }
+        catch (err) {
+            console.log('express-sessions', err);
+            cb && cb(err);
+        }
+    },
+    destroy: function (sid, cb) {
+        CouchbaseStore.client.remove(sid, cb);
+    }
+
+    //-----------------------------------------
+    // TODO: implment these
+    //-----------------------------------------
+
+    //,
+    // all: function (cb) {
+    //     CouchbaseStore.client.keys(CouchbaseStore.options.collection + ':*', function (err, docs) {
+    //         if (err) {
+    //             return cb && cb(err);
+    //         }
+
+    //         cb && cb(null, docs);
+    //     });
+    // },
+    // length: function (cb) {
+    //     CouchbaseStore.client.keys(CouchbaseStore.options.collection + ':*', function (err, docs) {
+    //         if (err) {
+    //             return cb && cb(err);
+    //         }
+
+    //         cb && cb(null, docs.length);
+    //     });
+    // },
+    // clear: function (cb) {
+    //     CouchbaseStore.client.del(CouchbaseStore.options.collection + ':*', cb);
+    // }
+}
+
 var SessionStore = function (options, cb) {
     var options = {
         storage: options.storage || 'mongodb',
         host: options.host || 'localhost',
         port: options.port || (options.storage == 'redis' ? 6379 : 27017),
         db: options.db || 'test',
+        bucket: options.bucket || 'sessions',
         collection: options.collection || 'sessions',
         instance: options.instance || null,
         expire: options.expire || 86400
@@ -171,7 +250,7 @@ var SessionStore = function (options, cb) {
             });
 
             MongoStore.options = options;
-            MongoStore.client = mongoose.model(options.collection, schema);
+            MongoStore.client = mongoose.model('sessions', schema);
 
             for (var i in MongoStore) {
                 SessionStore.prototype[i] = MongoStore[i];
@@ -190,11 +269,30 @@ var SessionStore = function (options, cb) {
                 SessionStore.prototype[i] = RedisStore[i];
             }
             break;
+        case 'couchbase':
+            if (options.instance) {
+                CouchbaseStore.client = options.instance;
+            } else {
+                CouchbaseStore.client = new couchbase.Connection({
+                    host: options.host + ':' + options.port,
+                    bucket: options.bucket,
+                    password: process.env.COUCHBASE_PASSWORD
+                });
+            }
+
+            CouchbaseStore.options = options;
+
+            for (var i in CouchbaseStore) {
+                SessionStore.prototype[i] = CouchbaseStore[i];
+            }
+
+            break;
     }
 
 
     if (cb) cb.call(null);
 }
+
 
 SessionStore.prototype = new express.session.Store();
 
