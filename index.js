@@ -162,13 +162,9 @@ var CouchbaseStore = {
         });
     },
     set: function (sid, data, cb) {
-        console.log('in set');
         try {
             var lastAccess = new Date();
             var expires = lastAccess.setDate(lastAccess.getDate() + 1);
-
-            console.log('data is ...');
-            console.log(data);
 
             if (typeof data.cookie != 'undefined') {
                 expires = data.cookie._expires;
